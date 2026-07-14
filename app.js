@@ -373,7 +373,7 @@ function renderTabContent(data, tab) {
     }
     const daysUntil = (dateStr) => Math.ceil((new Date(dateStr) - new Date()) / 86400000);
     el.innerHTML = `
-      <table class="data-table">
+      <table class="data-table storage-table">
         <thead>
           <tr>
             <th>Item</th>
@@ -410,6 +410,14 @@ function renderTabContent(data, tab) {
       return;
     }
     const allSales = data.delivery.sales || [];
+    const allFeePayouts = data.delivery.feePayouts || [];
+    // Unsettled fee per trip = that trip's fee minus whatever's already been
+    // paid out against it specifically — not a lifetime total of fees ever
+    // earned, which would include fees the driver already collected.
+    const unpaidFeeForSale = (saleId, fullFee) => {
+      const paid = allFeePayouts.filter(p => p.delivery_sale_id === saleId).reduce((sum, p) => sum + p.amount, 0);
+      return Math.max(0, fullFee - paid);
+    };
     el.innerHTML = `
       <table class="data-table">
         <thead>
@@ -417,26 +425,28 @@ function renderTabContent(data, tab) {
             <th>Driver</th>
             <th class="num">Holding</th>
             <th class="num">Deliveries</th>
-            <th class="num">Fees</th>
+            <th class="num">Unsettled Fees</th>
           </tr>
         </thead>
         <tbody>
           ${data.delivery.guys.map(g => {
             const b = data.delivery.balances.find(b => b.delivery_guy_id === g.id) || { owes: 0 };
             const guySales = allSales.filter(s => s.delivery_guy_id === g.id);
-            const totalFees = guySales.reduce((sum, s) => sum + (s.delivery_fee || 0), 0);
+            const unsettledFees = guySales.reduce((sum, s) => sum + unpaidFeeForSale(s.id, s.delivery_fee || 0), 0);
             const isOpen = _expandedDrivers.has(g.id);
             return `
               <tr class="driver-row" data-gid="${g.id}">
                 <td>${g.name} <span class="debt-expand-arrow">${isOpen ? '▲' : '▼'}</span></td>
                 <td class="num ${b.owes > 0 ? 'exp-warn' : ''}">${fmt(b.owes)}</td>
                 <td class="num">${guySales.length}</td>
-                <td class="num">${fmt(totalFees)}</td>
+                <td class="num ${unsettledFees > 0 ? 'exp-warn' : ''}">${fmt(unsettledFees)}</td>
               </tr>
               ${isOpen ? `
                 <tr><td colspan="4" class="driver-detail-cell">
-                  ${guySales.length === 0 ? '<div class="empty-state small">No deliveries yet.</div>' : guySales.map(s => `
-                    <div class="debt-history-entry ${s.status === 'settled' ? 'payment' : ''}">
+                  ${guySales.length === 0 ? '<div class="empty-state small">No deliveries yet.</div>' : guySales.map(s => {
+                    const tripUnpaid = unpaidFeeForSale(s.id, s.delivery_fee || 0);
+                    return `
+                    <div class="debt-history-entry ${tripUnpaid === 0 ? 'payment' : ''}">
                       <div class="debt-history-head">
                         <span class="debt-history-icon">📦</span>
                         <span class="debt-history-date">#${s.id} · ${fmtDate(s.created_at)}</span>
@@ -447,9 +457,9 @@ function renderTabContent(data, tab) {
                         <div class="debt-history-items">
                           ${s.items.map(it => `<div class="debt-history-item-line">${it.quantity}× ${it.item_name} <span class="debt-item-price">${fmt(it.subtotal)}</span></div>`).join('')}
                         </div>` : ''}
-                      <div class="debt-history-note">Delivery fee: ${fmt(s.delivery_fee)} · ${s.status}</div>
-                    </div>
-                  `).join('')}
+                      <div class="debt-history-note">Fee: ${fmt(s.delivery_fee)} · ${tripUnpaid > 0 ? `Unsettled: ${fmt(tripUnpaid)}` : 'Fee settled'} · ${s.status}</div>
+                    </div>`;
+                  }).join('')}
                 </td></tr>
               ` : ''}`;
           }).join('')}

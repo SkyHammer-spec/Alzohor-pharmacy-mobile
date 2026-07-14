@@ -218,6 +218,7 @@ function renderDriverView(data, fromCache, timestamp) {
 const TABS = ['alerts', 'debts', 'storage', 'delivery', 'patients', 'reports', 'cash'];
 let _currentTab = 'alerts';
 let _expandedDebtCustomers = new Set(); // which customers' purchase history is expanded on the Debts tab
+let _expandedDrivers = new Set(); // which drivers' delivery trips are expanded on the Delivery tab
 
 function renderAdminView(data, fromCache, timestamp) {
   const content = document.getElementById('content');
@@ -404,10 +405,65 @@ function renderTabContent(data, tab) {
         </tbody>
       </table>`;
   } else if (tab === 'delivery') {
-    el.innerHTML = data.delivery.balances.map(b => {
-      const g = data.delivery.guys.find(g => g.id === b.delivery_guy_id);
-      return `<div class="row-item"><div>${g?.name || '—'}</div><div class="row-amt warn">${fmt(b.owes)}</div></div>`;
-    }).join('') || '<div class="empty-state">No delivery guys yet.</div>';
+    if (data.delivery.guys.length === 0) {
+      el.innerHTML = '<div class="empty-state">No delivery guys yet.</div>';
+      return;
+    }
+    const allSales = data.delivery.sales || [];
+    el.innerHTML = `
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Driver</th>
+            <th class="num">Holding</th>
+            <th class="num">Deliveries</th>
+            <th class="num">Fees</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${data.delivery.guys.map(g => {
+            const b = data.delivery.balances.find(b => b.delivery_guy_id === g.id) || { owes: 0 };
+            const guySales = allSales.filter(s => s.delivery_guy_id === g.id);
+            const totalFees = guySales.reduce((sum, s) => sum + (s.delivery_fee || 0), 0);
+            const isOpen = _expandedDrivers.has(g.id);
+            return `
+              <tr class="driver-row" data-gid="${g.id}">
+                <td>${g.name} <span class="debt-expand-arrow">${isOpen ? '▲' : '▼'}</span></td>
+                <td class="num ${b.owes > 0 ? 'exp-warn' : ''}">${fmt(b.owes)}</td>
+                <td class="num">${guySales.length}</td>
+                <td class="num">${fmt(totalFees)}</td>
+              </tr>
+              ${isOpen ? `
+                <tr><td colspan="4" class="driver-detail-cell">
+                  ${guySales.length === 0 ? '<div class="empty-state small">No deliveries yet.</div>' : guySales.map(s => `
+                    <div class="debt-history-entry ${s.status === 'settled' ? 'payment' : ''}">
+                      <div class="debt-history-head">
+                        <span class="debt-history-icon">📦</span>
+                        <span class="debt-history-date">#${s.id} · ${fmtDate(s.created_at)}</span>
+                        <span class="debt-history-amt warn">${fmt(s.total)}</span>
+                      </div>
+                      <div class="debt-history-note">${s.destination_name}${s.destination_phone ? ' · ' + s.destination_phone : ''}</div>
+                      ${s.items && s.items.length > 0 ? `
+                        <div class="debt-history-items">
+                          ${s.items.map(it => `<div class="debt-history-item-line">${it.quantity}× ${it.item_name} <span class="debt-item-price">${fmt(it.subtotal)}</span></div>`).join('')}
+                        </div>` : ''}
+                      <div class="debt-history-note">Delivery fee: ${fmt(s.delivery_fee)} · ${s.status}</div>
+                    </div>
+                  `).join('')}
+                </td></tr>
+              ` : ''}`;
+          }).join('')}
+        </tbody>
+      </table>`;
+
+    el.querySelectorAll('.driver-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const gid = parseInt(row.dataset.gid);
+        if (_expandedDrivers.has(gid)) _expandedDrivers.delete(gid);
+        else _expandedDrivers.add(gid);
+        renderTabContent(data, tab);
+      });
+    });
   } else if (tab === 'patients') {
     el.innerHTML = data.patients.families.map(f => {
       const members = data.patients.members.filter(m => m.family_id === f.id);

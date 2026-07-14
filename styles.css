@@ -116,6 +116,8 @@ body {
 .data-table td.dim { color: var(--text2); }
 .data-table td.exp-warn { color: var(--warn); font-weight: 600; }
 .data-table td.exp-danger { color: var(--danger); font-weight: 600; }
+.driver-row { cursor: pointer; }
+.driver-detail-cell { background: #fafafa; padding: 4px 10px 12px !important; }
 .as-num { font-size: 24px; font-weight: 700; }
 
 .metric-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 0 16px 16px; }

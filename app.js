@@ -97,14 +97,26 @@ function saveSession(session) { localStorage.setItem('alzouhor_session', JSON.st
 function clearSession() { localStorage.removeItem('alzouhor_session'); }
 
 // ── Login ──────────────────────────────────────────────────────────────
-async function attemptLogin(username, token) {
+// mobile-users.json now contains two kinds of entries, built fresh from
+// the desktop app every sync:
+//   { type:'admin',  username, password_hash, display_name }
+//   { type:'driver', username, password_hash, display_name, driver_id }
+// No separate mobile-only accounts — 'admin' entries are real desktop
+// users (any role), 'driver' entries are delivery guys who've had mobile
+// credentials set up for them.
+async function attemptLogin(username, password) {
   const users = await fetchDriveJson('mobile-users.json'); // always live — never trust a cached login list
-  const tokenHash = await sha256Hex(token);
+  const passwordHash = await sha256Hex(password);
   const match = users.find(u =>
-    u.display_name.trim().toLowerCase() === username.trim().toLowerCase() && u.token_hash === tokenHash
+    u.username.trim().toLowerCase() === username.trim().toLowerCase() && u.password_hash === passwordHash
   );
-  if (!match) return { success: false, error: 'Incorrect name or access code.' };
-  const session = { id: match.id, display_name: match.display_name, role: match.role, linked_driver_id: match.linked_driver_id };
+  if (!match) return { success: false, error: 'Incorrect username or password.' };
+  const session = {
+    username: match.username,
+    display_name: match.display_name,
+    role: match.type, // 'admin' or 'driver'
+    linked_driver_id: match.driver_id || null,
+  };
   saveSession(session);
   return { success: true, session };
 }
@@ -121,11 +133,11 @@ function renderLogin(errorMsg) {
         <p class="login-sub">Mobile</p>
         ${errorMsg ? `<div class="login-error">${errorMsg}</div>` : ''}
         <div class="form-group">
-          <label>Name</label>
+          <label>Username</label>
           <input id="login-name" type="text" autocomplete="username" />
         </div>
         <div class="form-group">
-          <label>Access Code</label>
+          <label>Password</label>
           <input id="login-token" type="password" autocomplete="current-password" />
         </div>
         <button class="btn-primary full-width" id="login-btn">Sign In</button>
@@ -141,7 +153,7 @@ function renderLogin(errorMsg) {
       if (result.success) renderApp();
       else renderLogin(result.error);
     } catch (e) {
-      renderLogin('DEBUG ERROR: ' + e.message);
+      renderLogin('Could not reach the server. Check your internet connection and try again.');
     }
   });
 }

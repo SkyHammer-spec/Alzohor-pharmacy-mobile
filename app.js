@@ -366,9 +366,43 @@ function renderTabContent(data, tab) {
       });
     });
   } else if (tab === 'storage') {
-    el.innerHTML = data.storage.items.map(i => `
-      <div class="row-item"><div>${i.name}</div><div class="row-sub">${i.category || '—'}</div><div class="row-amt">${i.quantity}</div></div>
-    `).join('');
+    if (data.storage.items.length === 0) {
+      el.innerHTML = '<div class="empty-state">No items in storage.</div>';
+      return;
+    }
+    const daysUntil = (dateStr) => Math.ceil((new Date(dateStr) - new Date()) / 86400000);
+    el.innerHTML = `
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>Category</th>
+            <th class="num">Qty</th>
+            <th>Expires</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${data.storage.items.map(i => {
+            let expClass = '';
+            let expText = '—';
+            if (i.expire_date) {
+              const days = daysUntil(i.expire_date);
+              expText = fmtDate(i.expire_date);
+              if (days < 0) expClass = 'exp-danger';
+              else if (days <= 30) expClass = 'exp-danger';
+              else if (days <= 60) expClass = 'exp-warn';
+            }
+            const qtyClass = i.min_quantity != null && i.quantity <= i.min_quantity ? 'exp-warn' : '';
+            return `
+              <tr>
+                <td>${i.name}</td>
+                <td class="dim">${i.category || '—'}</td>
+                <td class="num ${qtyClass}">${i.quantity}</td>
+                <td class="${expClass}">${expText}</td>
+              </tr>`;
+          }).join('')}
+        </tbody>
+      </table>`;
   } else if (tab === 'delivery') {
     el.innerHTML = data.delivery.balances.map(b => {
       const g = data.delivery.guys.find(g => g.id === b.delivery_guy_id);

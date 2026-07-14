@@ -233,6 +233,39 @@ function renderTabContent(data, tab) {
   const el = document.getElementById('tab-content');
   if (tab === 'alerts') {
     const a = data.alerts;
+    const totalAlerts = a.expired.length + a.outOfStock.length + a.expiring30.length + a.expiring60.length + a.lowStock.length;
+
+    const daysUntil = (dateStr) => Math.ceil((new Date(dateStr) - new Date()) / 86400000);
+
+    // Each section: icon/label/severity class + a function that produces the
+    // specific reason text for that item (why THIS item is in THIS section).
+    const sections = [
+      { key: 'expired', icon: '⛔', label: 'Expired', cls: 'danger', items: a.expired,
+        reason: (i) => {
+          const days = Math.abs(daysUntil(i.expire_date));
+          return `Expired ${days === 0 ? 'today' : days === 1 ? '1 day ago' : days + ' days ago'} (${i.expire_date})`;
+        } },
+      { key: 'outOfStock', icon: '🚫', label: 'Out of Stock', cls: 'danger', items: a.outOfStock,
+        reason: () => `0 units left in stock` },
+      { key: 'expiring30', icon: '⏰', label: 'Expiring Soon', cls: 'warn', items: a.expiring30,
+        reason: (i) => {
+          const days = daysUntil(i.expire_date);
+          return `Expires in ${days} day${days === 1 ? '' : 's'} (${i.expire_date})`;
+        } },
+      { key: 'expiring60', icon: '📅', label: 'Expiring Later', cls: 'info', items: a.expiring60,
+        reason: (i) => {
+          const days = daysUntil(i.expire_date);
+          return `Expires in ${days} days (${i.expire_date})`;
+        } },
+      { key: 'lowStock', icon: '📉', label: 'Low Stock', cls: 'warn', items: a.lowStock,
+        reason: (i) => `Only ${i.quantity} left — reorder point is ${i.min_quantity}` },
+    ];
+
+    if (totalAlerts === 0) {
+      el.innerHTML = `<div class="empty-state">✅ No alerts right now — everything looks good.</div>`;
+      return;
+    }
+
     el.innerHTML = `
       <div class="alert-stats">
         <div class="alert-stat danger"><div class="as-num">${a.expired.length}</div><div>Expired</div></div>
@@ -240,8 +273,18 @@ function renderTabContent(data, tab) {
         <div class="alert-stat warn"><div class="as-num">${a.expiring30.length}</div><div>Expiring Soon</div></div>
         <div class="alert-stat warn"><div class="as-num">${a.lowStock.length}</div><div>Low Stock</div></div>
       </div>
-      ${[...a.expired, ...a.outOfStock, ...a.expiring30, ...a.lowStock].map(i => `
-        <div class="row-item"><div>${i.name}</div><div class="row-sub">Qty: ${i.quantity} · Exp: ${i.expire_date || '—'}</div></div>
+      ${sections.filter(s => s.items.length > 0).map(s => `
+        <div class="alert-section">
+          <div class="alert-section-header ${s.cls}">${s.icon} ${s.label} <span class="alert-count">${s.items.length}</span></div>
+          ${s.items.map(i => `
+            <div class="row-item">
+              <div>
+                <div>${i.name}</div>
+                <div class="row-sub alert-reason ${s.cls}">${s.reason(i)}</div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
       `).join('')}`;
   } else if (tab === 'debts') {
     el.innerHTML = data.debts.balances.map(b => {

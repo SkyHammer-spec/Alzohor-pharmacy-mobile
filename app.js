@@ -141,7 +141,7 @@ function renderLogin(errorMsg) {
       if (result.success) renderApp();
       else renderLogin(result.error);
     } catch (e) {
-      renderLogin('Could not reach the server. Check your internet connection and try again.');
+      renderLogin('DEBUG ERROR: ' + e.message);
     }
   });
 }

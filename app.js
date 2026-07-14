@@ -32,6 +32,10 @@ function formatTimestamp(iso) {
   const d = new Date(iso);
   return d.toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
+function fmtDate(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
 async function sha256Hex(text) {
   // Web Crypto API — built into every modern mobile browser, no library needed.
   const data = new TextEncoder().encode(text);
@@ -213,6 +217,7 @@ function renderDriverView(data, fromCache, timestamp) {
 
 const TABS = ['alerts', 'debts', 'storage', 'delivery', 'patients', 'reports', 'cash'];
 let _currentTab = 'alerts';
+let _expandedDebtCustomers = new Set(); // which customers' purchase history is expanded on the Debts tab
 
 function renderAdminView(data, fromCache, timestamp) {
   const content = document.getElementById('content');
@@ -287,10 +292,79 @@ function renderTabContent(data, tab) {
         </div>
       `).join('')}`;
   } else if (tab === 'debts') {
+    const sales = data.debts.sales || [];
+    const payments = data.debts.payments || [];
+    if (data.debts.balances.length === 0) {
+      el.innerHTML = '<div class="empty-state">No outstanding debts.</div>';
+      return;
+    }
     el.innerHTML = data.debts.balances.map(b => {
       const c = data.debts.customers.find(c => c.id === b.customer_id);
-      return `<div class="row-item"><div>${c?.name || '—'}</div><div class="row-amt warn">${fmt(b.owes)}</div></div>`;
-    }).join('') || '<div class="empty-state">No outstanding debts.</div>';
+      const isOpen = _expandedDebtCustomers.has(b.customer_id);
+      const custSales = sales.filter(s => s.customer_id === b.customer_id);
+      const custPayments = payments.filter(p => p.customer_id === b.customer_id);
+      // Merge purchases and payments into one chronological timeline so it
+      // reads like a real account history, not two separate disconnected lists.
+      const timeline = [
+        ...custSales.map(s => ({ type: 'sale', date: s.created_at, data: s })),
+        ...custPayments.map(p => ({ type: 'payment', date: p.created_at, data: p })),
+      ].sort((x, y) => new Date(y.date) - new Date(x.date));
+
+      return `
+        <div class="debt-customer">
+          <div class="row-item debt-customer-row" data-cid="${b.customer_id}">
+            <div>
+              <div>${c?.name || '—'}</div>
+              <div class="row-sub">${custSales.length} purchase${custSales.length === 1 ? '' : 's'}${b.creditNet > 0 ? ' · has credit' : ''}</div>
+            </div>
+            <div class="row-amt ${b.owes > 0 ? 'warn' : ''}">${b.owes > 0 ? fmt(b.owes) : (b.creditNet > 0 ? '+' + fmt(b.creditNet) + ' credit' : fmt(0))}</div>
+            <div class="debt-expand-arrow">${isOpen ? '▲' : '▼'}</div>
+          </div>
+          ${isOpen ? `
+            <div class="debt-history">
+              ${timeline.length === 0 ? '<div class="empty-state small">No history yet.</div>' : timeline.map(t => {
+                if (t.type === 'sale') {
+                  const s = t.data;
+                  return `
+                    <div class="debt-history-entry sale">
+                      <div class="debt-history-head">
+                        <span class="debt-history-icon">🛒</span>
+                        <span class="debt-history-date">${fmtDate(s.created_at)}</span>
+                        <span class="debt-history-amt warn">${fmt(s.total)}</span>
+                      </div>
+                      ${s.items && s.items.length > 0 ? `
+                        <div class="debt-history-items">
+                          ${s.items.map(it => `<div class="debt-history-item-line">${it.quantity}× ${it.item_name} <span class="debt-item-price">${fmt(it.subtotal)}</span></div>`).join('')}
+                        </div>` : ''}
+                      ${s.note ? `<div class="debt-history-note">"${s.note}"</div>` : ''}
+                      ${s.discount > 0 ? `<div class="debt-history-note">Discount: ${fmt(s.discount)}</div>` : ''}
+                    </div>`;
+                } else {
+                  const p = t.data;
+                  return `
+                    <div class="debt-history-entry payment">
+                      <div class="debt-history-head">
+                        <span class="debt-history-icon">✅</span>
+                        <span class="debt-history-date">${fmtDate(p.created_at)}</span>
+                        <span class="debt-history-amt success">− ${fmt(p.amount)}</span>
+                      </div>
+                      <div class="debt-history-note">Payment received${p.payment_method ? ' · ' + p.payment_method : ''}</div>
+                    </div>`;
+                }
+              }).join('')}
+            </div>
+          ` : ''}
+        </div>`;
+    }).join('');
+
+    el.querySelectorAll('.debt-customer-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const cid = parseInt(row.dataset.cid);
+        if (_expandedDebtCustomers.has(cid)) _expandedDebtCustomers.delete(cid);
+        else _expandedDebtCustomers.add(cid);
+        renderTabContent(data, tab);
+      });
+    });
   } else if (tab === 'storage') {
     el.innerHTML = data.storage.items.map(i => `
       <div class="row-item"><div>${i.name}</div><div class="row-sub">${i.category || '—'}</div><div class="row-amt">${i.quantity}</div></div>

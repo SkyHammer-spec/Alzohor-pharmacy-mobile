@@ -5,7 +5,7 @@
 // separately in app.js, which deliberately does NOT go through this cache,
 // since data needs to always try live-fetch first.
 
-const CACHE_NAME = 'alzouhor-mobile-shell-v5';
+const CACHE_NAME = 'alzouhor-mobile-shell-v6';
 const SHELL_FILES = [
   './index.html',
   './app.js',

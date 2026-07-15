@@ -23,6 +23,13 @@ const API_KEY = 'AIzaSyBo-xnBxOXB8J6alxDwrjaQkQupoebqM1s';
 
 const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3';
 
+// PUSH_SERVER_URL: the small standalone push server (see push-server/
+// folder) — fill this in once it's deployed, e.g.
+// 'https://al-zouhor-push.onrender.com'. VAPID_PUBLIC_KEY must exactly
+// match the public key that server was started with.
+const PUSH_SERVER_URL = 'https://alzohornotifications.bonto.run';
+const VAPID_PUBLIC_KEY = 'BLbsHFhPn7jv3mySl_yM6b_OPyQoHQD7BEFRo56mEGq4jxsP1rbBpScanwpXlmc62ehYC0Tn14otqFzxWcyBOtA';
+
 // ── Small helpers ────────────────────────────────────────────────────────
 function fmt(n) {
   return Number(n || 0).toLocaleString() + ' IQD';
@@ -187,6 +194,56 @@ async function renderApp() {
   } catch (e) {
     document.getElementById('content').innerHTML = `<div class="error-box">${e.message}</div>`;
   }
+
+  setupPushNotifications(); // fire-and-forget — never blocks the actual data render above
+}
+
+// ── Push notifications ──────────────────────────────────────────────────
+// Only needs to run ONCE per device (the browser remembers the subscription
+// after that), but it's safe to call every app open — it's a no-op if
+// already subscribed. Silently does nothing if PUSH_SERVER_URL hasn't been
+// configured yet, or if the browser/OS doesn't support push at all (older
+// iOS Safari versions, for example).
+async function setupPushNotifications() {
+  if (PUSH_SERVER_URL.startsWith('PASTE_YOUR')) return; // not configured yet
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+
+  try {
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') return;
+
+    const registration = await navigator.serviceWorker.ready;
+    let subscription = await registration.pushManager.getSubscription();
+    if (!subscription) {
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true, // required by spec — every push must result in a visible notification
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+      });
+    }
+    // Always re-send on app open, not just at first subscribe — cheap
+    // no-op on the server if it already has this endpoint, but guarantees
+    // the server re-learns about this device if its subscriptions.json
+    // was ever wiped (e.g. a redeploy).
+    await fetch(`${PUSH_SERVER_URL}/subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(subscription),
+    });
+  } catch (e) {
+    // Non-fatal — the app itself still works fine without notifications.
+    console.warn('Push notification setup failed:', e.message);
+  }
+}
+
+// Web Push subscription keys must be Uint8Array, but VAPID public keys are
+// handed out as URL-safe base64 strings — this is the standard conversion.
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; i++) outputArray[i] = rawData.charCodeAt(i);
+  return outputArray;
 }
 
 function renderDriverView(data, fromCache, timestamp) {
@@ -219,6 +276,7 @@ const TABS = ['alerts', 'debts', 'storage', 'delivery', 'patients', 'reports', '
 let _currentTab = 'alerts';
 let _expandedDebtCustomers = new Set(); // which customers' purchase history is expanded on the Debts tab
 let _expandedDrivers = new Set(); // which drivers' delivery trips are expanded on the Delivery tab
+let _expandedFamilies = new Set(); // which patient families are expanded on the Patients tab
 
 function renderAdminView(data, fromCache, timestamp) {
   const content = document.getElementById('content');
@@ -467,10 +525,92 @@ function renderTabContent(data, tab) {
       });
     });
   } else if (tab === 'patients') {
+    if (data.patients.families.length === 0) {
+      el.innerHTML = '<div class="empty-state">No patient families yet.</div>';
+      return;
+    }
+    // Mirrors desktop patients.js EXACTLY (pillsRemaining/buildAlerts/renderMed) —
+    // same thresholds, same bar-fill direction (fills with REMAINING pills,
+    // not consumed), same color breakpoints.
+    const EXPIRY_WARN_DAYS = 14;
+    const LOW_PILL_THRESHOLD = 6;
+
+    const daysUntilExpiry = (expireDate) => {
+      if (!expireDate) return Infinity;
+      return Math.floor((new Date(expireDate) - new Date()) / 86400000);
+    };
+    const pillsRemaining = (med) => {
+      if (!med.start_date || !med.daily_dose || med.daily_dose <= 0) return med.total_pills;
+      const daysPassed = Math.max(0, Math.floor((Date.now() - new Date(med.start_date)) / 86400000));
+      return Math.max(0, med.total_pills - daysPassed * med.daily_dose);
+    };
+    const buildAlerts = (med) => {
+      const remaining = pillsRemaining(med);
+      const days = daysUntilExpiry(med.expire_date);
+      const alerts = [];
+      if (remaining <= LOW_PILL_THRESHOLD && remaining > 0) alerts.push({ type: 'low', msg: `Only ${remaining} pills left` });
+      if (remaining === 0) alerts.push({ type: 'empty', msg: 'Course finished — no pills left' });
+      if (days !== Infinity && days <= EXPIRY_WARN_DAYS && days >= 0) alerts.push({ type: 'expiry', msg: `Expires in ${days} day${days === 1 ? '' : 's'}` });
+      if (days < 0) alerts.push({ type: 'expired', msg: `Expired ${Math.abs(days)} day${Math.abs(days) === 1 ? '' : 's'} ago` });
+      return alerts;
+    };
+
     el.innerHTML = data.patients.families.map(f => {
       const members = data.patients.members.filter(m => m.family_id === f.id);
-      return `<div class="row-item"><div>${f.name}</div><div class="row-sub">${members.length} member(s)</div></div>`;
-    }).join('') || '<div class="empty-state">No patient families yet.</div>';
+      const isOpen = _expandedFamilies.has(f.id);
+      return `
+        <div class="debt-customer">
+          <div class="row-item debt-customer-row" data-fid="${f.id}">
+            <div>
+              <div>${f.name}</div>
+              <div class="row-sub">${members.length} member${members.length === 1 ? '' : 's'}</div>
+            </div>
+            <div class="debt-expand-arrow">${isOpen ? '▲' : '▼'}</div>
+          </div>
+          ${isOpen ? `
+            <div class="debt-history">
+              ${members.length === 0 ? '<div class="empty-state small">No members yet.</div>' : members.map(m => {
+                const meds = data.patients.meds.filter(med => med.member_id === m.id);
+                return `
+                  <div class="patient-member">
+                    <div class="patient-member-name">👤 ${m.name}${m.phone ? ` · ${m.phone}` : ''}</div>
+                    ${meds.length === 0 ? '<div class="empty-state small">No medicines on record.</div>' : meds.map(med => {
+                      const remaining = pillsRemaining(med);
+                      const days = daysUntilExpiry(med.expire_date);
+                      const alerts = buildAlerts(med);
+                      const pillPct = med.total_pills > 0 ? Math.max(0, remaining / med.total_pills * 100) : 0;
+                      const barClass = remaining <= LOW_PILL_THRESHOLD ? 'finished' : remaining <= med.total_pills * 0.3 ? 'low' : 'ok';
+                      const expStr = med.expire_date
+                        ? (days < 0 ? `<span class="med-exp-tag danger">Expired</span>`
+                          : days <= EXPIRY_WARN_DAYS ? `<span class="med-exp-tag danger">Exp ${fmtDate(med.expire_date)} (${days}d)</span>`
+                          : `<span class="med-exp-tag">Exp ${fmtDate(med.expire_date)}</span>`)
+                        : '';
+                      return `
+                        <div class="med-card ${barClass}">
+                          <div class="med-card-head">
+                            <span class="med-name">💊 ${med.medicine_name}</span>
+                            ${expStr}
+                          </div>
+                          <div class="med-progress-track"><div class="med-progress-fill ${barClass}" style="width:${pillPct.toFixed(1)}%"></div></div>
+                          <div class="med-sub">${med.daily_dose}/day · ${med.total_pills} total (${med.sheets}×${med.pills_per_sheet}) · <strong class="${remaining <= LOW_PILL_THRESHOLD ? 'med-remaining-low' : ''}">${remaining} left</strong></div>
+                          ${alerts.map(a => `<div class="med-alert-line ${a.type}">${a.msg}</div>`).join('')}
+                        </div>`;
+                    }).join('')}
+                  </div>`;
+              }).join('')}
+            </div>
+          ` : ''}
+        </div>`;
+    }).join('');
+
+    el.querySelectorAll('.debt-customer-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const fid = parseInt(row.dataset.fid);
+        if (_expandedFamilies.has(fid)) _expandedFamilies.delete(fid);
+        else _expandedFamilies.add(fid);
+        renderTabContent(data, tab);
+      });
+    });
   } else if (tab === 'reports' || tab === 'cash') {
     const history = tab === 'reports' ? data.reportsHistory : data.cashHistory;
     el.innerHTML = history.slice().reverse().map(h => `

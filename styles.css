@@ -125,6 +125,25 @@ body {
 .storage-table th:nth-child(4), .storage-table td:nth-child(4) { width: 28%; padding-left: 18px; }
 .driver-row { cursor: pointer; }
 .driver-detail-cell { background: #fafafa; padding: 4px 10px 12px !important; }
+
+.patient-member { margin-top: 10px; }
+.patient-member-name { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+.med-card { background: white; border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; border-left: 3px solid var(--primary); }
+.med-card.low { border-left-color: var(--warn); }
+.med-card.finished { border-left-color: var(--danger); }
+.med-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; font-size: 13px; }
+.med-name { font-weight: 600; }
+.med-exp-tag { font-size: 10.5px; color: var(--text2); white-space: nowrap; }
+.med-exp-tag.danger { color: var(--danger); font-weight: 600; }
+.med-progress-track { background: #eee; border-radius: 999px; height: 6px; margin-top: 8px; overflow: hidden; }
+.med-progress-fill { height: 100%; background: var(--primary); border-radius: 999px; }
+.med-progress-fill.low { background: var(--warn); }
+.med-progress-fill.finished { background: var(--danger); }
+.med-sub { font-size: 11px; color: var(--text3); margin-top: 6px; }
+.med-remaining-low { color: var(--danger); }
+.med-alert-line { font-size: 11px; font-weight: 600; margin-top: 5px; padding: 3px 8px; border-radius: 6px; display: inline-block; }
+.med-alert-line.low, .med-alert-line.expiry { background: #fef6e7; color: var(--warn); }
+.med-alert-line.empty, .med-alert-line.expired { background: #fdecea; color: var(--danger); }
 .as-num { font-size: 24px; font-weight: 700; }
 
 .metric-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 0 16px 16px; }
